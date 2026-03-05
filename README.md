@@ -4,13 +4,27 @@ Twitter/X 命令行工具 — 读取 Timeline、书签和用户信息。
 
 **零 API Key** — 使用浏览器 Cookie 认证，免费访问 Twitter。
 
+## 安装
+
+```bash
+# 推荐：uv tool（更快，隔离环境）
+uv tool install twitter-cli
+
+# 其次：pipx
+pipx install twitter-cli
+```
+
+从源码安装：
+
+```bash
+git clone git@github.com:jackwener/twitter-cli.git
+cd twitter-cli
+uv sync
+```
+
 ## Quick Start
 
 ```bash
-# 安装
-cd twitter-cli
-uv sync
-
 # 运行（自动从 Chrome 提取 Cookie）
 twitter feed
 ```
