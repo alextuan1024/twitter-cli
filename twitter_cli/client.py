@@ -14,6 +14,15 @@ import urllib.request
 
 from .models import Author, Metrics, Tweet, TweetMedia, UserProfile
 
+try:
+    import bs4
+    import requests as _requests_lib
+    from x_client_transaction import ClientTransaction
+    from x_client_transaction.utils import generate_headers as _gen_ct_headers, get_ondemand_file_url
+    _HAS_XCLIENT = True
+except ImportError:  # pragma: no cover
+    _HAS_XCLIENT = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,7 +37,7 @@ FALLBACK_QUERY_IDS = {
     "Bookmarks": "VFdMm9iVZxlU6hD86gfW_A",
     "UserByScreenName": "1VOOyvKkiI3FMmkeDNxM9A",
     "UserTweets": "E3opETHurmVJflFsUBVuUQ",
-    "SearchTimeline": "VhUd6vHVmLBcw0uX-6jMLA",
+    "SearchTimeline": "nWemVnGJ6A5eQAR5-oQeAg",
     "Likes": "lIDpu_NWL7_VhimGGt0o6A",
 }
 
@@ -40,7 +49,8 @@ TWITTER_OPENAPI_URL = (
 FEATURES = {
     "rweb_video_screen_enabled": False,
     "profile_label_improvements_pcf_label_in_post_enabled": True,
-    "rweb_tipjar_consumption_enabled": True,
+    "responsive_web_profile_redirect_enabled": False,
+    "rweb_tipjar_consumption_enabled": False,
     "verified_phone_label_enabled": False,
     "creator_subscriptions_tweet_preview_api_enabled": True,
     "responsive_web_graphql_timeline_navigation_enabled": True,
@@ -50,8 +60,9 @@ FEATURES = {
     "c9s_tweet_anatomy_moderator_badge_enabled": True,
     "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
     "responsive_web_grok_analyze_post_followups_enabled": True,
-    "responsive_web_jetfuel_frame": False,
+    "responsive_web_jetfuel_frame": True,
     "responsive_web_grok_share_attachment_enabled": True,
+    "responsive_web_grok_annotations_enabled": True,
     "articles_preview_enabled": True,
     "responsive_web_edit_tweet_api_enabled": True,
     "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
@@ -59,15 +70,19 @@ FEATURES = {
     "longform_notetweets_consumption_enabled": True,
     "responsive_web_twitter_article_tweet_consumption_enabled": True,
     "tweet_awards_web_tipping_enabled": False,
-    "responsive_web_grok_show_grok_translated_post": False,
-    "responsive_web_grok_analysis_button_from_backend": False,
-    "creator_subscriptions_quote_tweet_preview_enabled": False,
+    "content_disclosure_indicator_enabled": True,
+    "content_disclosure_ai_generated_indicator_enabled": True,
+    "responsive_web_grok_show_grok_translated_post": True,
+    "responsive_web_grok_analysis_button_from_backend": True,
+    "post_ctas_fetch_enabled": True,
     "freedom_of_speech_not_reach_fetch_enabled": True,
     "standardized_nudges_misinfo": True,
     "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
     "longform_notetweets_rich_text_read_enabled": True,
-    "longform_notetweets_inline_media_enabled": True,
+    "longform_notetweets_inline_media_enabled": False,
     "responsive_web_grok_image_annotation_enabled": True,
+    "responsive_web_grok_imagine_annotation_enabled": True,
+    "responsive_web_grok_community_note_auto_translation_is_enabled": False,
     "responsive_web_enhance_cards_enabled": False,
 }
 
@@ -220,6 +235,8 @@ class TwitterClient:
         self._max_retries = int(rl.get("maxRetries", 3))
         self._retry_base_delay = float(rl.get("retryBaseDelay", 5.0))
         self._max_count = min(int(rl.get("maxCount", 200)), _ABSOLUTE_MAX_COUNT)
+        self._client_transaction = None  # type: Optional[Any]  # lazy init
+        self._ct_init_attempted = False
 
     def fetch_home_timeline(self, count=20):
         # type: (int) -> List[Tweet]
@@ -350,11 +367,18 @@ class TwitterClient:
                 "querySource": "typed_query",
                 "product": product,
             },
+            override_base_variables=True,
         )
 
-    def _fetch_timeline(self, operation_name, count, get_instructions, extra_variables=None):
-        # type: (str, int, Callable[[Any], Any], Optional[Dict[str, Any]]) -> List[Tweet]
-        """Generic timeline fetcher with pagination and deduplication."""
+    def _fetch_timeline(self, operation_name, count, get_instructions, extra_variables=None, override_base_variables=False):
+        # type: (str, int, Callable[[Any], Any], Optional[Dict[str, Any]], bool) -> List[Tweet]
+        """Generic timeline fetcher with pagination and deduplication.
+
+        Args:
+            override_base_variables: If True, use only extra_variables + count/cursor
+                instead of the default timeline base variables. Needed for
+                endpoints like SearchTimeline that reject unknown variables.
+        """
         if count <= 0:
             return []
 
@@ -369,12 +393,15 @@ class TwitterClient:
 
         while len(tweets) < count and attempts < max_attempts:
             attempts += 1
-            variables = {
-                "count": min(count - len(tweets) + 5, 40),
-                "includePromotedContent": False,
-                "latestControlAvailable": True,
-                "requestContext": "launch",
-            }  # type: Dict[str, Any]
+            if override_base_variables:
+                variables = {"count": min(count - len(tweets) + 5, 40)}  # type: Dict[str, Any]
+            else:
+                variables = {
+                    "count": min(count - len(tweets) + 5, 40),
+                    "includePromotedContent": False,
+                    "latestControlAvailable": True,
+                    "requestContext": "launch",
+                }  # type: Dict[str, Any]
             if extra_variables:
                 variables.update(extra_variables)
             if cursor:
@@ -418,10 +445,31 @@ class TwitterClient:
                 return self._api_get(retry_url)
             raise RuntimeError(str(exc))
 
-    def _build_headers(self):
-        # type: () -> Dict[str, str]
+    def _ensure_client_transaction(self):
+        # type: () -> None
+        """Lazily initialize ClientTransaction for x-client-transaction-id header."""
+        if self._ct_init_attempted or not _HAS_XCLIENT:
+            return
+        self._ct_init_attempted = True
+        try:
+            session = _requests_lib.Session()
+            session.headers.update(_gen_ct_headers())
+            home_page = session.get("https://x.com", timeout=10)
+            home_page_response = bs4.BeautifulSoup(home_page.content, "html.parser")
+            ondemand_url = get_ondemand_file_url(response=home_page_response)
+            ondemand_file = session.get(ondemand_url, timeout=10)
+            self._client_transaction = ClientTransaction(
+                home_page_response=home_page_response,
+                ondemand_file_response=ondemand_file.text,
+            )
+            logger.info("ClientTransaction initialized for x-client-transaction-id")
+        except Exception as exc:
+            logger.warning("Failed to init ClientTransaction: %s", exc)
+
+    def _build_headers(self, url=""):
+        # type: (str) -> Dict[str, str]
         """Build shared headers for authenticated API calls."""
-        return {
+        headers = {
             "Authorization": "Bearer %s" % BEARER_TOKEN,
             "Cookie": "auth_token=%s; ct0=%s" % (self._auth_token, self._ct0),
             "X-Csrf-Token": self._ct0,
@@ -430,15 +478,27 @@ class TwitterClient:
             "X-Twitter-Client-Language": "en",
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
-            "Referer": "https://x.com/home",
+            "Referer": "https://x.com",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
         }
+        # Generate x-client-transaction-id if available
+        if self._client_transaction and url:
+            try:
+                path = urllib.parse.urlparse(url).path
+                tid = self._client_transaction.generate_transaction_id(
+                    method="GET", path=path,
+                )
+                headers["X-Client-Transaction-Id"] = tid
+            except Exception as exc:
+                logger.debug("Failed to generate transaction id: %s", exc)
+        return headers
 
     def _api_get(self, url):
         # type: (str) -> Dict[str, Any]
         """Make authenticated GET request to Twitter API with retry on 429."""
-        headers = self._build_headers()
+        self._ensure_client_transaction()
+        headers = self._build_headers(url=url)
 
         for attempt in range(self._max_retries + 1):
             request = urllib.request.Request(url)
