@@ -30,7 +30,7 @@ DEFAULT_CONFIG = {
         },
     },
     "rateLimit": {
-        "requestDelay": 1.5,
+        "requestDelay": 2.5,
         "maxRetries": 3,
         "retryBaseDelay": 5.0,
         "maxCount": 200,

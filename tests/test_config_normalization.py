@@ -34,7 +34,7 @@ def test_filter_normalization_for_invalid_values(tmp_path: Path) -> None:
     assert config["filter"]["weights"]["likes"] == 1.0
     assert config["filter"]["weights"]["retweets"] == 4.0
     # rateLimit should get defaults since it wasn't in the yaml
-    assert config["rateLimit"]["requestDelay"] == 1.5
+    assert config["rateLimit"]["requestDelay"] == 2.5
     assert config["rateLimit"]["maxRetries"] == 3
     assert config["rateLimit"]["retryBaseDelay"] == 5.0
     assert config["rateLimit"]["maxCount"] == 200

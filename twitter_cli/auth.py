@@ -10,12 +10,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-import ssl
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from typing import Dict, Optional
+
+from curl_cffi import requests as _cffi_requests
 
 from .constants import BEARER_TOKEN, USER_AGENT
 
@@ -35,10 +34,10 @@ def verify_cookies(auth_token, ct0):
     # type: (str, str) -> Dict[str, Any]
     """Verify cookies by calling a Twitter API endpoint.
 
+    Uses curl_cffi for proper TLS fingerprint.
     Tries multiple endpoints. Only raises on clear auth failures (401/403).
     For other errors (404, network), returns empty dict (proceed without verification).
     """
-    # Endpoints to try, in order of preference
     urls = [
         "https://api.x.com/1.1/account/verify_credentials.json",
         "https://x.com/i/api/1.1/account/settings.json",
@@ -53,24 +52,22 @@ def verify_cookies(auth_token, ct0):
         "User-Agent": USER_AGENT,
     }
 
-    for url in urls:
-        req = urllib.request.Request(url)
-        for k, v in headers.items():
-            req.add_header(k, v)
+    session = _cffi_requests.Session(impersonate="chrome133")
 
-        ctx = ssl.create_default_context()
+    for url in urls:
         try:
-            with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                return {"screen_name": data.get("screen_name", "")}
-        except urllib.error.HTTPError as e:
-            if e.code in (401, 403):
+            resp = session.get(url, headers=headers, timeout=5)
+            if resp.status_code in (401, 403):
                 raise RuntimeError(
-                    "Cookie expired or invalid (HTTP %d). Please re-login to x.com in your browser." % e.code
+                    "Cookie expired or invalid (HTTP %d). Please re-login to x.com in your browser." % resp.status_code
                 )
-            # 404 or other — try next endpoint
-            logger.debug("Verification endpoint %s returned HTTP %d, trying next...", url, e.code)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {"screen_name": data.get("screen_name", "")}
+            logger.debug("Verification endpoint %s returned HTTP %d, trying next...", url, resp.status_code)
             continue
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.debug("Verification endpoint %s failed: %s", url, e)
             continue
