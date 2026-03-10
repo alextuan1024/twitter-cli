@@ -106,7 +106,9 @@ def test_cli_whoami_command(monkeypatch) -> None:
 
     result_json = runner.invoke(cli, ["whoami", "--json"])
     assert result_json.exit_code == 0
-    assert '"screenName": "testuser"' in result_json.output
+    payload = yaml.safe_load(runner.invoke(cli, ["whoami", "--yaml"]).output)
+    assert payload["ok"] is True
+    assert payload["data"]["user"]["username"] == "testuser"
 
 
 def test_cli_whoami_auto_yaml(monkeypatch) -> None:
@@ -122,7 +124,9 @@ def test_cli_whoami_auto_yaml(monkeypatch) -> None:
 
     assert result.exit_code == 0
     payload = yaml.safe_load(result.output)
-    assert payload["screenName"] == "testuser"
+    assert payload["ok"] is True
+    assert payload["schema_version"] == "1"
+    assert payload["data"]["user"]["username"] == "testuser"
 
 
 def test_cli_status_auto_yaml(monkeypatch) -> None:
@@ -138,8 +142,10 @@ def test_cli_status_auto_yaml(monkeypatch) -> None:
 
     assert result.exit_code == 0
     payload = yaml.safe_load(result.output)
-    assert payload["authenticated"] is True
-    assert payload["user"]["screenName"] == "testuser"
+    assert payload["ok"] is True
+    assert payload["schema_version"] == "1"
+    assert payload["data"]["authenticated"] is True
+    assert payload["data"]["user"]["username"] == "testuser"
 
 
 def test_cli_reply_command(monkeypatch) -> None:

@@ -49,7 +49,15 @@ from .formatter import (
     print_user_profile,
     print_user_table,
 )
-from .output import default_structured_format, emit_structured, structured_output_options, use_rich_output
+from .models import UserProfile
+from .output import (
+    default_structured_format,
+    emit_structured,
+    error_payload,
+    structured_output_options,
+    success_payload,
+    use_rich_output,
+)
 from .serialization import (
     tweets_from_json,
     tweets_to_data,
@@ -63,6 +71,27 @@ from .serialization import (
 console = Console(stderr=True)
 FEED_TYPES = ["for-you", "following"]
 SEARCH_PRODUCTS = ["Top", "Latest", "Photos", "Videos"]
+
+
+def _agent_user_profile(profile: UserProfile) -> dict:
+    """Normalize a Twitter/X profile for structured agent output."""
+    data = user_profile_to_dict(profile)
+    return {
+        "id": data["id"],
+        "name": data["name"],
+        "username": data["screenName"],
+        "screenName": data["screenName"],
+        "bio": data["bio"],
+        "location": data["location"],
+        "url": data["url"],
+        "followers": data["followers"],
+        "following": data["following"],
+        "tweets": data["tweets"],
+        "likes": data["likes"],
+        "verified": data["verified"],
+        "profileImageUrl": data["profileImageUrl"],
+        "createdAt": data["createdAt"],
+    }
 
 
 def _setup_logging(verbose):
@@ -684,13 +713,13 @@ def status(as_json, as_yaml):
         client = _get_client_for_output(config, quiet=not rich_output)
         profile = client.fetch_me()
     except RuntimeError as exc:
-        payload = {"authenticated": False, "error": str(exc)}
+        payload = error_payload("not_authenticated", str(exc))
         if emit_structured(payload, as_json=as_json, as_yaml=as_yaml):
             sys.exit(1)
         _exit_with_error(exc)
         return
 
-    payload = {"authenticated": True, "user": user_profile_to_dict(profile)}
+    payload = success_payload({"authenticated": True, "user": _agent_user_profile(profile)})
     if emit_structured(payload, as_json=as_json, as_yaml=as_yaml):
         return
 
@@ -711,9 +740,11 @@ def whoami(as_json, as_yaml):
             console.print("👤 Fetching current user...")
         profile = client.fetch_me()
     except RuntimeError as exc:
+        if emit_structured(error_payload("not_authenticated", str(exc)), as_json=as_json, as_yaml=as_yaml):
+            raise SystemExit(1) from None
         _exit_with_error(exc)
 
-    if not emit_structured(user_profile_to_dict(profile), as_json=as_json, as_yaml=as_yaml):
+    if not emit_structured(success_payload({"user": _agent_user_profile(profile)}), as_json=as_json, as_yaml=as_yaml):
         console.print()
         print_user_profile(profile, console)
 
