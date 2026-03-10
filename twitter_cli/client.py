@@ -654,9 +654,9 @@ class TwitterClient:
         try:
             return self._api_get(url)
         except TwitterAPIError as exc:
-            # Fallback query IDs can go stale. Retry with live lookup if 404.
-            if exc.status_code == 404 and using_fallback:
-                logger.info("Retrying %s with live queryId after 404", operation_name)
+            # Fallback query IDs can go stale. Retry with live lookup if 404/422.
+            if exc.status_code in (404, 422) and using_fallback:
+                logger.info("Retrying %s with live queryId after %d", operation_name, exc.status_code)
                 _invalidate_query_id(operation_name)
                 refreshed_query_id = _resolve_query_id(operation_name, prefer_fallback=False, url_fetch_fn=_url_fetch)
                 retry_url = _build_graphql_url(refreshed_query_id, operation_name, variables, features, field_toggles)
@@ -680,8 +680,8 @@ class TwitterClient:
         try:
             return _do_post(query_id)
         except TwitterAPIError as exc:
-            if exc.status_code == 404 and using_fallback:
-                logger.info("Retrying POST %s with live queryId after 404", operation_name)
+            if exc.status_code in (404, 422) and using_fallback:
+                logger.info("Retrying POST %s with live queryId after %d", operation_name, exc.status_code)
                 _invalidate_query_id(operation_name)
                 refreshed = _resolve_query_id(operation_name, prefer_fallback=False, url_fetch_fn=_url_fetch)
                 return _do_post(refreshed)
