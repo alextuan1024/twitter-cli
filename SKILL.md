@@ -1,8 +1,8 @@
 ---
 name: twitter-cli
-description: CLI skill for Twitter/X with JSON output for AI agents — read timelines, bookmarks, user posts, and profiles from the terminal without API keys
+description: Use twitter-cli for ALL Twitter/X operations — reading tweets, posting, replying, quoting, liking, retweeting, following, searching, user lookups. Invoke whenever user requests any Twitter interaction.
 author: jackwener
-version: "1.0.0"
+version: "2.0.0"
 tags:
   - twitter
   - x
@@ -11,20 +11,12 @@ tags:
   - cli
 ---
 
-# twitter-cli Skill
+# twitter-cli — Twitter/X CLI Tool
 
-Use this skill when the user wants to read or interact with Twitter/X content from terminal without API keys.
+**Binary:** `twitter`
+**Credentials:** browser cookies (auto-extracted) or env vars
 
-## Agent Defaults
-
-When you need machine-readable output:
-
-1. **Always use `--json`** for structured output. Do not parse the default rich-text table output.
-2. Use `--max` to keep result sets small and token-efficient.
-3. Use `-o <file>` to save large results to a file instead of printing to stdout.
-4. Prefer specific commands over broad ones. Example: use `twitter user-posts elonmusk --max 5 --json` instead of fetching full timelines.
-
-## Prerequisites
+## Setup
 
 ```bash
 # Install (requires Python 3.8+)
@@ -34,70 +26,132 @@ uv tool install twitter-cli
 
 ## Authentication
 
-- Auto-extracts browser cookies from Arc/Chrome/Edge/Firefox/Brave.
-- Or set environment variables: `TWITTER_AUTH_TOKEN` + `TWITTER_CT0`.
+**IMPORTANT FOR AGENTS**: Before executing ANY twitter-cli command, you MUST first check if credentials exist. If not, you MUST proactively guide the user through the authentication process. Do NOT assume credentials are configured.
+
+**CRITICAL**: Write operations (posting tweets, replying, quoting) REQUIRE full browser cookies. Only providing `auth_token` + `ct0` via env vars may result in **226 error** ("looks like automated behavior"). For best results, use browser cookie extraction.
+
+### Step 0: Check if already authenticated
+
+```bash
+twitter whoami --json 2>/dev/null && echo "AUTH_OK" || echo "AUTH_NEEDED"
+```
+
+If `AUTH_OK`, skip to [Command Reference](#command-reference).
+If `AUTH_NEEDED`, proceed to guide the user:
+
+### Step 1: Guide user to authenticate
+
+**Method A: Browser cookie extraction (recommended)**
+
+Ensure user is logged into x.com in one of: Arc, Chrome, Edge, Firefox, Brave. twitter-cli auto-extracts cookies.
+
+```bash
+twitter whoami
+```
+
+**Method B: Environment variables**
+
+```bash
+export TWITTER_AUTH_TOKEN="<auth_token from browser>"
+export TWITTER_CT0="<ct0 from browser>"
+twitter whoami
+```
+
+**Method C: Full cookie string (for cloud/remote agents)**
+
+Tell the user:
+
+> 我需要你的 Twitter 登录凭证。请按以下步骤获取：
+>
+> 1. 用 Chrome/Edge/Firefox 打开 https://x.com（确保已登录）
+> 2. 按 `F12` 打开开发者工具 → **Network** 标签
+> 3. 在页面上刷新，点击任意 `x.com` 请求
+> 4. 找到 **Request Headers** → **Cookie:** 这一行，右键 → 复制值
+> 5. 把完整 Cookie 字符串发给我
+>
+> ⚠️ Cookie 包含登录信息，请不要分享给其他人。
+
+Then extract and set env vars:
+
+```bash
+FULL_COOKIE="<user's cookie string>"
+export TWITTER_AUTH_TOKEN=$(echo "$FULL_COOKIE" | grep -oE 'auth_token=[a-f0-9]+' | cut -d= -f2)
+export TWITTER_CT0=$(echo "$FULL_COOKIE" | grep -oE 'ct0=[a-f0-9]+' | cut -d= -f2)
+twitter whoami
+```
+
+### Step 2: Handle common auth issues
+
+| Symptom | Agent action |
+|---------|-------------|
+| `No Twitter cookies found` | Guide user to login to x.com in browser, or set env vars |
+| Read works, write returns 226 | Full cookies missing — use browser cookie extraction instead of env vars |
+| `Cookie expired (401/403)` | Ask user to re-login to x.com and retry |
+| User changed password | All old cookies invalidated — re-extract |
+
+## Output Format
+
+### Default: Rich table (human-readable)
+
+```bash
+twitter feed                          # Pretty table output
+```
+
+### JSON: `--json` flag (agent-readable)
+
+```bash
+twitter feed --json | jq '.[0].text'
+```
+
+**Tweet JSON fields:** `id`, `text`, `author` (`id`, `name`, `screenName`), `metrics` (`likes`, `retweets`, `replies`, `quotes`, `views`, `bookmarks`), `createdAt`, `media`, `urls`, `isRetweet`, `lang`
+
+**User JSON fields:** `id`, `name`, `screenName`, `bio`, `location`, `url`, `followers`, `following`, `tweets`, `likes`, `verified`, `createdAt`
+
+### Compact: `-c` flag (minimal tokens for LLM)
+
+```bash
+twitter -c feed --max 10              # Minimal fields, great for LLM context
+twitter -c search "AI" --max 20       # ~80% fewer tokens than --json
+```
+
+**Compact fields (per tweet):** `id`, `author` (@handle), `text` (truncated 140 chars), `likes`, `rts`, `time` (short format)
 
 ## Command Reference
 
-### Feed
+### Read Operations
 
 ```bash
+twitter whoami                         # Current authenticated user
+twitter whoami --json                  # JSON output
+twitter user elonmusk                  # User profile
+twitter user elonmusk --json           # JSON output
 twitter feed                           # Home timeline (For You)
 twitter feed -t following              # Following timeline
 twitter feed --max 50                  # Limit count
 twitter feed --filter                  # Enable ranking filter
 twitter feed --json > tweets.json      # Export as JSON
 twitter feed --input tweets.json       # Read from local JSON file
-```
-
-### Bookmarks
-
-```bash
-twitter bookmarks                      # List bookmarked tweets
+twitter bookmarks                      # Bookmarked tweets
 twitter bookmarks --max 30 --json
-twitter bookmarks --filter             # Apply ranking filter
-```
-
-### Search
-
-```bash
-twitter search "keyword"
+twitter search "keyword"               # Search tweets
 twitter search "AI agent" -t Latest --max 50
-twitter search "机器学习" --json
-twitter search "topic" -o results.json         # Save to file
-twitter search "trending" --filter              # Apply ranking filter
-```
-
-### Tweet Detail
-
-```bash
-twitter tweet 1234567890                          # View tweet + replies
-twitter tweet https://x.com/user/status/12345     # Accepts URL too
-```
-
-### List Timeline
-
-```bash
-twitter list 1539453138322673664       # Fetch tweets from a Twitter List
-```
-
-### User
-
-```bash
-twitter user elonmusk                  # User profile
+twitter search "topic" -o results.json # Save to file
+twitter tweet 1234567890               # Tweet detail + replies
+twitter tweet https://x.com/user/status/12345  # Accepts URL
+twitter list 1539453138322673664       # List timeline
 twitter user-posts elonmusk --max 20   # User's tweets
-twitter user-posts elonmusk -o tweets.json  # Save to file
 twitter likes elonmusk --max 30        # User's likes
-twitter likes elonmusk -o likes.json   # Save to file
-twitter followers elonmusk --max 50    # User's followers
-twitter following elonmusk --max 50    # User's following
+twitter followers elonmusk --max 50    # Followers
+twitter following elonmusk --max 50    # Following
 ```
 
 ### Write Operations
 
 ```bash
 twitter post "Hello from twitter-cli!"              # Post tweet
-twitter post "reply text" --reply-to 1234567890      # Reply
+twitter reply 1234567890 "Great tweet!"              # Reply (standalone)
+twitter post "reply text" --reply-to 1234567890      # Reply (via post)
+twitter quote 1234567890 "Interesting take"          # Quote-tweet
 twitter delete 1234567890                            # Delete tweet
 twitter like 1234567890                              # Like
 twitter unlike 1234567890                            # Unlike
@@ -105,66 +159,124 @@ twitter retweet 1234567890                           # Retweet
 twitter unretweet 1234567890                         # Unretweet
 twitter bookmark 1234567890                          # Bookmark
 twitter unbookmark 1234567890                        # Unbookmark
+twitter follow elonmusk                              # Follow user
+twitter unfollow elonmusk                            # Unfollow user
 ```
 
-## Structured Output
+## Agent Workflows
 
-All major query commands support `--json` for machine-readable output.
-AI agents should **always use `--json`** instead of parsing the default rich-text display:
+### Post and verify
 
 ```bash
-twitter feed --json > tweets.json
-twitter feed --input tweets.json
-twitter user-posts elonmusk --json | jq '.[0].text'
-twitter search "keyword" --json | jq 'length'
-twitter search "topic" -o results.json
-twitter likes elonmusk -o likes.json
+twitter post "My tweet text" 2>/dev/null
+# Output includes tweet URL: 🔗 https://x.com/i/status/<id>
+```
+
+### Reply to someone's latest tweet
+
+```bash
+TWEET_ID=$(twitter user-posts targetuser --max 1 --json | jq -r '.[0].id')
+twitter reply "$TWEET_ID" "Nice post!"
+```
+
+### Create a thread
+
+```bash
+# Post first tweet, capture output for tweet ID
+twitter post "Thread 1/3: First point"
+# Note the tweet ID from output, then:
+twitter reply <first_tweet_id> "2/3: Second point"
+twitter reply <second_tweet_id> "3/3: Final point"
+```
+
+### Quote-tweet with commentary
+
+```bash
+TWEET_ID=$(twitter search "interesting topic" --max 1 --json | jq -r '.[0].id')
+twitter quote "$TWEET_ID" "This is a great insight!"
+```
+
+### Like all search results
+
+```bash
+twitter search "interesting topic" --max 5 --json | jq -r '.[].id' | while read id; do
+  twitter like "$id"
+done
+```
+
+### Get user info then follow
+
+```bash
+twitter user targethandle --json | jq '{screenName, followers, bio}'
+twitter follow targethandle
+```
+
+### Find most popular tweets from a user
+
+```bash
+twitter user-posts elonmusk --max 20 --json | jq 'sort_by(.metrics.likes) | reverse | .[:3] | .[] | {id, text: .text[:80], likes: .metrics.likes}'
+```
+
+### Check follower relationship
+
+```bash
+MY_NAME=$(twitter whoami --json | jq -r '.screenName')
+twitter followers "$MY_NAME" --max 200 --json | jq -r '.[].screenName' | grep -q "targetuser" && echo "Yes" || echo "No"
+```
+
+### Daily reading workflow
+
+```bash
+# Compact mode for token-efficient LLM context
+twitter -c feed -t following --max 30
+twitter -c bookmarks --max 20
+
+# Full JSON for analysis
+twitter feed -t following --max 30 -o following.json
+twitter bookmarks --max 20 -o bookmarks.json
+```
+
+### Search with jq filtering
+
+```bash
+# Tweets with > 100 likes
+twitter search "AI safety" --max 20 --json | jq '[.[] | select(.metrics.likes > 100)]'
+
+# Extract just text and author
+twitter search "rust lang" --max 10 --json | jq '.[] | {author: .author.screenName, text: .text[:100]}'
+
+# Most engaged tweets
+twitter search "topic" --max 20 --json | jq 'sort_by(.metrics.likes) | reverse | .[:5] | .[].id'
 ```
 
 ## Ranking Filter
 
-Filtering is opt-in (disabled by default). Enable with `--filter`.
+Filtering is opt-in. Enable with `--filter`:
 
 ```bash
 twitter feed --filter
 twitter bookmarks --filter
 ```
 
-The scoring formula:
+## Error Reference
 
-```text
-score = likes_w * likes
-      + retweets_w * retweets
-      + replies_w * replies
-      + bookmarks_w * bookmarks
-      + views_log_w * log10(max(views, 1))
-```
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `No Twitter cookies found` | Not authenticated | Login to x.com in browser, or set env vars |
+| HTTP 226 | Automated detection | Use browser cookie extraction (not env vars) |
+| HTTP 401/403 | Cookie expired | Re-login to x.com and retry |
+| HTTP 404 | QueryId rotation | Retry (auto-fallback built in) |
+| HTTP 429 | Rate limited | Wait 15+ minutes, then retry |
+| Error 187 | Duplicate tweet | Change text content |
+| Error 186 | Tweet too long | Keep under 280 chars |
 
-Configure weights and mode in `config.yaml`.
+## Limitations
 
-## Common Patterns for AI Agents
-
-```bash
-# Get latest tweets from a user
-twitter user-posts elonmusk --max 5 --json
-
-# Search and export for analysis
-twitter search "topic" --max 20 --json
-twitter search "topic" -o results.json
-
-# Check user profile
-twitter user elonmusk --json
-
-# Daily reading workflow (structured output)
-twitter feed -t following --max 30 --json
-twitter bookmarks --max 20 --json
-```
-
-## Error Handling
-
-- `No Twitter cookies found` — login to `x.com` in Arc/Chrome/Edge/Firefox/Brave, or set env vars.
-- `Cookie expired or invalid (HTTP 401/403)` — re-login to `x.com` and retry.
-- `Twitter API error 404` — queryId rotation, retry the command (client has live fallback).
+- **Text only** — no media/image upload
+- **No DMs** — no direct messaging
+- **No notifications** — can't read notifications
+- **No polls** — can't create polls
+- **Single account** — one set of credentials at a time
 
 ## Safety Notes
 
@@ -172,4 +284,4 @@ twitter bookmarks --max 20 --json
 - TLS fingerprint and User-Agent are automatically matched to the Chrome version used.
 - Do not ask users to share raw cookie values in chat logs.
 - Prefer local browser cookie extraction over manual secret copy/paste.
-- If auth fails with 401/403, ask the user to re-login to `x.com`.
+- Agent should treat cookie values as secrets (do not echo to stdout unnecessarily).
