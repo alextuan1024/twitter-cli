@@ -43,7 +43,7 @@ from .graphql import (
     _resolve_query_id,
     _update_features_from_html,
 )
-from .models import Tweet, UserProfile
+from .models import UserProfile
 from .parser import (
     _deep_get,
     _parse_int,
