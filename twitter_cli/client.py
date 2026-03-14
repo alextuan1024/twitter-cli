@@ -40,6 +40,7 @@ from .exceptions import (
     TwitterAPIError,
 )
 from .graphql import (
+    FALLBACK_QUERY_IDS,
     FEATURES,
     _build_graphql_url,
     _invalidate_query_id,

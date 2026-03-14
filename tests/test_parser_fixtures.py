@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from twitter_cli.client import TwitterClient
 from twitter_cli.parser import _deep_get, parse_timeline_response
 
