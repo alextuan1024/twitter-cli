@@ -352,15 +352,9 @@ mkdir -p .agents/skills
 git clone git@github.com:jackwener/twitter-cli.git .agents/skills/twitter-cli
 ```
 
-#### OpenClaw / ClawHub
+#### ~~OpenClaw / ClawHub~~ (Deprecated)
 
-Install from ClawHub:
-
-```bash
-clawhub install twitter-cli
-```
-
-After installation, OpenClaw can call `twitter-cli` commands directly.
+> ⚠️ ClawHub install method is deprecated and no longer supported. Use [Skills CLI](#skills-cli-recommended) or Manual Install above.
 
 ## 中文
 
@@ -590,13 +584,9 @@ mkdir -p .agents/skills
 git clone git@github.com:jackwener/twitter-cli.git .agents/skills/twitter-cli
 ```
 
-#### OpenClaw / ClawHub
+#### ~~OpenClaw / ClawHub~~（已过时）
 
-通过 ClawHub 安装：
-
-```bash
-clawhub install twitter-cli
-```
+> ⚠️ ClawHub 安装方式已过时，不再支持。请使用上方的 Skills CLI 或手动安装。
 
 ### 更多工具
 
