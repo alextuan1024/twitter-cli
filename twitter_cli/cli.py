@@ -44,6 +44,7 @@ from rich.console import Console
 from . import __version__
 from .auth import get_cookies
 from .cache import resolve_cached_tweet, save_tweet_cache
+from .exceptions import TwitterError
 from .client import TwitterClient
 from .config import load_config
 from .filter import filter_tweets
@@ -156,9 +157,13 @@ def _get_client(config=None, quiet=False):
 
 
 
-def _exit_with_error(exc):
-    # type: (RuntimeError) -> None
-    if emit_error(_error_code_for_message(str(exc)), str(exc)):
+def _error_code_from_exc(exc: Exception) -> str:
+    """Extract structured error code from an exception."""
+    return getattr(exc, "error_code", "api_error")
+
+
+def _exit_with_error(exc: Exception) -> None:
+    if emit_error(_error_code_from_exc(exc), str(exc)):
         sys.exit(1)
     console.print("[red]❌ %s[/red]" % exc)
     sys.exit(1)
@@ -168,22 +173,8 @@ def _run_guarded(action):
     # type: (Callable[[], Any]) -> Any
     try:
         return action()
-    except RuntimeError as exc:
+    except (TwitterError, RuntimeError) as exc:
         _exit_with_error(exc)
-
-
-def _error_code_for_message(message):
-    # type: (str) -> str
-    lowered = message.lower()
-    if "cookie expired" in lowered or "no twitter cookies found" in lowered or "invalid cookie" in lowered:
-        return "not_authenticated"
-    if "rate limited" in lowered or "http 429" in lowered:
-        return "rate_limited"
-    if "invalid tweet" in lowered or "required" in lowered or "--max must" in lowered:
-        return "invalid_input"
-    if "not found" in lowered:
-        return "not_found"
-    return "api_error"
 
 
 def _resolve_fetch_count(max_count, configured):
@@ -258,13 +249,13 @@ def _print_lines(lines: List[str], mode: StructuredMode) -> None:
 
 
 def _handle_structured_runtime_error(
-    exc: RuntimeError,
+    exc: Exception,
     *,
     mode: StructuredMode,
     details: Optional[Dict[str, Any]] = None,
 ) -> None:
     if _emit_mode_payload(
-        error_payload(_error_code_for_message(str(exc)), str(exc), details=details),
+        error_payload(_error_code_from_exc(exc), str(exc), details=details),
         mode,
     ):
         raise SystemExit(1) from None
@@ -285,7 +276,7 @@ def _run_write_command(
         client = _get_client(load_config())
         _print_lines(progress_lines or [], mode)
         payload = operation(client)
-    except RuntimeError as exc:
+    except (TwitterError, RuntimeError) as exc:
         _handle_structured_runtime_error(exc, mode=mode, details=error_details)
         return None
 
@@ -325,7 +316,7 @@ def _fetch_and_display(fetch_fn, label, emoji, max_count, as_json, as_yaml, outp
         elapsed = time.time() - start
         if rich_output:
             console.print("✅ Fetched %d %s in %.1fs\n" % (len(tweets), label, elapsed))
-    except RuntimeError as exc:
+    except (TwitterError, RuntimeError) as exc:
         _exit_with_error(exc)
 
     filtered = _apply_filter(tweets, do_filter, config, rich_output=rich_output)
@@ -420,7 +411,7 @@ def feed(ctx, feed_type, max_count, as_json, as_yaml, input_file, output_file, d
             elapsed = time.time() - start
             if rich_output:
                 console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
-    except RuntimeError as exc:
+    except (TwitterError, RuntimeError) as exc:
         _exit_with_error(exc)
 
     filtered = _apply_filter(tweets, do_filter, config, rich_output=rich_output)
@@ -502,7 +493,7 @@ def user(screen_name, as_json, as_yaml):
         if rich_output:
             console.print("👤 Fetching user @%s..." % screen_name)
         profile = client.fetch_user(screen_name)
-    except RuntimeError as exc:
+    except (TwitterError, RuntimeError) as exc:
         _exit_with_error(exc)
 
     if not emit_structured(user_profile_to_dict(profile), as_json=as_json, as_yaml=as_yaml):
@@ -693,7 +684,7 @@ def tweet(ctx, tweet_id, max_count, full_text, as_json, as_yaml):
         elapsed = time.time() - start
         if rich_output:
             console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
-    except RuntimeError as exc:
+    except (TwitterError, RuntimeError) as exc:
         _exit_with_error(exc)
 
     _emit_tweet_detail(tweets, compact=compact, as_json=as_json, as_yaml=as_yaml, full_text=full_text)
@@ -757,7 +748,7 @@ def show(ctx, index, max_count, full_text, output_file, as_json, as_yaml):
         elapsed = time.time() - start
         if rich_output:
             console.print("✅ Fetched %d tweets in %.1fs\n" % (len(tweets), elapsed))
-    except RuntimeError as exc:
+    except (TwitterError, RuntimeError) as exc:
         _exit_with_error(exc)
 
     if output_file:
@@ -795,7 +786,7 @@ def article(ctx, tweet_id, as_json, as_yaml, as_markdown, output_file):
         elapsed = time.time() - start
         if rich_output:
             console.print("✅ Fetched article in %.1fs\n" % elapsed)
-    except RuntimeError as exc:
+    except (TwitterError, RuntimeError) as exc:
         _exit_with_error(exc)
 
     markdown = article_to_markdown(article_tweet)
@@ -836,13 +827,15 @@ def list_timeline(ctx, list_id, max_count, as_json, as_yaml, do_filter, full_tex
     _run_guarded(_run)
 
 
-@cli.command()
-@click.argument("screen_name")
-@click.option("--max", "-n", "max_count", type=int, default=None, help="Max users to fetch.")
-@structured_output_options
-def followers(screen_name, max_count, as_json, as_yaml):
-    # type: (str, int, bool, bool) -> None
-    """List followers of a user. SCREEN_NAME is the @handle (without @)."""
+def _fetch_and_display_users(
+    screen_name: str,
+    fetch_fn_name: str,
+    label: str,
+    max_count: Optional[int],
+    as_json: bool,
+    as_yaml: bool,
+) -> None:
+    """Shared fetch-and-display logic for followers/following commands."""
     screen_name = screen_name.lstrip("@")
     config = load_config()
     try:
@@ -853,20 +846,30 @@ def followers(screen_name, max_count, as_json, as_yaml):
         profile = client.fetch_user(screen_name)
         fetch_count = _resolve_configured_count(config, max_count)
         if rich_output:
-            console.print("👥 Fetching followers (%d)...\n" % fetch_count)
+            console.print("👥 Fetching %s (%d)...\n" % (label, fetch_count))
         start = time.time()
-        users = client.fetch_followers(profile.id, fetch_count)
+        users = getattr(client, fetch_fn_name)(profile.id, fetch_count)
         elapsed = time.time() - start
         if rich_output:
-            console.print("✅ Fetched %d followers in %.1fs\n" % (len(users), elapsed))
-    except RuntimeError as exc:
+            console.print("✅ Fetched %d %s in %.1fs\n" % (len(users), label, elapsed))
+    except (TwitterError, RuntimeError) as exc:
         _exit_with_error(exc)
 
     if emit_structured(users_to_data(users), as_json=as_json, as_yaml=as_yaml):
         return
 
-    print_user_table(users, console, title="👥 @%s followers — %d" % (screen_name, len(users)))
+    print_user_table(users, console, title="👥 @%s %s — %d" % (screen_name, label, len(users)))
     console.print()
+
+
+@cli.command()
+@click.argument("screen_name")
+@click.option("--max", "-n", "max_count", type=int, default=None, help="Max users to fetch.")
+@structured_output_options
+def followers(screen_name, max_count, as_json, as_yaml):
+    # type: (str, int, bool, bool) -> None
+    """List followers of a user. SCREEN_NAME is the @handle (without @)."""
+    _fetch_and_display_users(screen_name, "fetch_followers", "followers", max_count, as_json, as_yaml)
 
 
 @cli.command()
@@ -876,30 +879,7 @@ def followers(screen_name, max_count, as_json, as_yaml):
 def following(screen_name, max_count, as_json, as_yaml):
     # type: (str, int, bool, bool) -> None
     """List accounts a user is following. SCREEN_NAME is the @handle (without @)."""
-    screen_name = screen_name.lstrip("@")
-    config = load_config()
-    try:
-        rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
-        client = _get_client(config, quiet=not rich_output)
-        if rich_output:
-            console.print("👤 Fetching @%s's profile..." % screen_name)
-        profile = client.fetch_user(screen_name)
-        fetch_count = _resolve_configured_count(config, max_count)
-        if rich_output:
-            console.print("👥 Fetching following (%d)...\n" % fetch_count)
-        start = time.time()
-        users = client.fetch_following(profile.id, fetch_count)
-        elapsed = time.time() - start
-        if rich_output:
-            console.print("✅ Fetched %d following in %.1fs\n" % (len(users), elapsed))
-    except RuntimeError as exc:
-        _exit_with_error(exc)
-
-    if emit_structured(users_to_data(users), as_json=as_json, as_yaml=as_yaml):
-        return
-
-    print_user_table(users, console, title="👥 @%s following — %d" % (screen_name, len(users)))
-    console.print()
+    _fetch_and_display_users(screen_name, "fetch_following", "following", max_count, as_json, as_yaml)
 
 
 # ── Write commands ──────────────────────────────────────────────────────
@@ -1055,8 +1035,8 @@ def status(as_json, as_yaml):
         rich_output = use_rich_output(as_json=as_json, as_yaml=as_yaml)
         client = _get_client(config, quiet=not rich_output)
         profile = client.fetch_me()
-    except RuntimeError as exc:
-        payload = error_payload("not_authenticated", str(exc))
+    except (TwitterError, RuntimeError) as exc:
+        payload = error_payload(_error_code_from_exc(exc), str(exc))
         if emit_structured(payload, as_json=as_json, as_yaml=as_yaml):
             sys.exit(1)
         _exit_with_error(exc)
@@ -1082,8 +1062,8 @@ def whoami(as_json, as_yaml):
         if rich_output:
             console.print("👤 Fetching current user...")
         profile = client.fetch_me()
-    except RuntimeError as exc:
-        if emit_structured(error_payload("not_authenticated", str(exc)), as_json=as_json, as_yaml=as_yaml):
+    except (TwitterError, RuntimeError) as exc:
+        if emit_structured(error_payload(_error_code_from_exc(exc), str(exc)), as_json=as_json, as_yaml=as_yaml):
             raise SystemExit(1) from None
         _exit_with_error(exc)
 

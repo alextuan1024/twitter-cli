@@ -104,10 +104,11 @@ def test_cli_commands_wrap_client_creation_errors(monkeypatch, args) -> None:
 
 
 def test_cli_user_error_yaml(monkeypatch) -> None:
+    from twitter_cli.exceptions import NotFoundError
     monkeypatch.setenv("OUTPUT", "auto")
     monkeypatch.setattr(
         "twitter_cli.cli._get_client",
-        lambda config=None, quiet=False: (_ for _ in ()).throw(RuntimeError("User not found")),
+        lambda config=None, quiet=False: (_ for _ in ()).throw(NotFoundError("User not found")),
     )
     runner = CliRunner()
 

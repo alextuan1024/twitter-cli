@@ -19,6 +19,7 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 from .constants import BEARER_TOKEN, get_user_agent
+from .exceptions import AuthenticationError
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ def verify_cookies(auth_token: str, ct0: str, cookie_string: Optional[str] = Non
         try:
             resp = session.get(url, headers=headers, timeout=5)
             if resp.status_code in (401, 403):
-                raise RuntimeError(
+                raise AuthenticationError(
                     "Cookie expired or invalid (HTTP %d). Please re-login to x.com in your browser." % resp.status_code
                 )
             if resp.status_code == 200:
@@ -616,7 +617,7 @@ def get_cookies() -> Dict[str, str]:
         lines.append("Option 2: Make sure you are logged into x.com in your browser (Arc/Chrome/Edge/Firefox/Brave)")
         lines.append("")
         lines.append("Run 'twitter -v <command>' for debug diagnostics.")
-        raise RuntimeError("\n".join(lines))
+        raise AuthenticationError("\n".join(lines))
 
     # Verify only for explicit auth failures; transient endpoint issues are tolerated.
     try:

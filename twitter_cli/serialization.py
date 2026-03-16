@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict, Iterable, List, Optional
 
 from .models import Author, Metrics, Tweet, TweetMedia, UserProfile
-from .timeutil import format_local_time
+from .timeutil import format_iso8601, format_local_time
 
 
 def tweet_to_dict(tweet: Tweet) -> Dict[str, Any]:
@@ -31,6 +31,7 @@ def tweet_to_dict(tweet: Tweet) -> Dict[str, Any]:
         },
         "createdAt": tweet.created_at,
         "createdAtLocal": format_local_time(tweet.created_at),
+        "createdAtISO": format_iso8601(tweet.created_at),
         "media": [
             {
                 "type": media.type,
@@ -190,6 +191,7 @@ def user_profile_to_dict(user: UserProfile) -> Dict[str, Any]:
         "verified": user.verified,
         "profileImageUrl": user.profile_image_url,
         "createdAt": user.created_at,
+        "createdAtISO": format_iso8601(user.created_at),
     }
 
 
